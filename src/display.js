@@ -853,6 +853,9 @@ SpiceDisplayConn.prototype.hook_events = function()
         canvas.focus();
 
         this.focusListener = () => this.parent.send_clipboard_grab()
+        // send host clipboard when the canvas is rendered initially
+        this.focusListener();
+        // register focus event to grab host clipboard when the canvas gets focus
         canvas.addEventListener('focus', this.focusListener);
     }
 }
