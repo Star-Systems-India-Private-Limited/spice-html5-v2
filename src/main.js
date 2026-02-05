@@ -75,6 +75,7 @@ function SpiceMainConn()
     this.file_xfer_task_id = 0;
     this.file_xfer_read_queue = [];
     this.ports = [];
+    this.agent_caps = [0]
 }
 
 SpiceMainConn.prototype = Object.create(SpiceConn.prototype);
@@ -233,6 +234,7 @@ SpiceMainConn.prototype.process_channel_message = function(msg)
         if (agent_data.type == Constants.VD_AGENT_ANNOUNCE_CAPABILITIES)
         {
             var agent_caps = new Messages.VDAgentAnnounceCapabilities(agent_data.data);
+            this.agent_caps = [agent_caps.caps];
             if (agent_caps.request)
                 this.announce_agent_capabilities(0);
             return true;
@@ -240,6 +242,26 @@ SpiceMainConn.prototype.process_channel_message = function(msg)
         else if (agent_data.type == Constants.VD_AGENT_FILE_XFER_STATUS)
         {
             this.handle_file_xfer_status(new Messages.VDAgentFileXferStatusMessage(agent_data.data));
+            return true;
+        }
+        else if (agent_data.type == Constants.VD_AGENT_CLIPBOARD_GRAB)
+        {
+            this.handle_clipboard_grab();
+            return true;
+        }
+        else if (agent_data.type == Constants.VD_AGENT_CLIPBOARD)
+        {
+            this.handle_clipboard_receive(agent_data);
+            return true;
+        }
+        else if (agent_data.type == Constants.VD_AGENT_CLIPBOARD_REQUEST)
+        {
+            this.handle_clipboard_send();
+            return true;
+        }
+        else if (agent_data.type == Constants.VD_AGENT_CLIPBOARD_RELEASE)
+        {
+            // Currently we don't need to do anything when the agent releases the clipboard
             return true;
         }
 
@@ -360,7 +382,9 @@ SpiceMainConn.prototype.announce_agent_capabilities = function(request)
 {
     var caps = new Messages.VDAgentAnnounceCapabilities(request, (1 << Constants.VD_AGENT_CAP_MOUSE_STATE) |
                                                         (1 << Constants.VD_AGENT_CAP_MONITORS_CONFIG) |
-                                                        (1 << Constants.VD_AGENT_CAP_REPLY));
+                                                        (1 << Constants.VD_AGENT_CAP_REPLY) |
+                                                        (1 << Constants.VD_AGENT_CAP_CLIPBOARD_SELECTION) |
+                                                        (1 << Constants.VD_AGENT_CAP_CLIPBOARD_BY_DEMAND));
     this.send_agent_message(Constants.VD_AGENT_ANNOUNCE_CAPABILITIES, caps);
 }
 
@@ -469,6 +493,66 @@ SpiceMainConn.prototype.file_xfer_completed = function(file_xfer_task, error)
     file_xfer_task.remove_progressbar();
 
     delete this.file_xfer_tasks[file_xfer_task.id];
+}
+
+SpiceMainConn.prototype.handle_clipboard_grab = function()
+{
+    DEBUG > 1 && console.log("handling clipboard grab from agent");
+
+    // agent is requesting clipboard grab, so we send a message to request clipboard contents
+    const type = Constants.VD_AGENT_CLIPBOARD_UTF8_TEXT;
+    const clipboard_request = new Messages.SpiceMsgClipboardRequest(type, this.agent_caps);
+    this.send_agent_message(Constants.VD_AGENT_CLIPBOARD_REQUEST, clipboard_request);
+}
+
+SpiceMainConn.prototype.handle_clipboard_receive = function(agent_data)
+{
+    DEBUG > 1 && console.log("received clipboard data from agent");
+
+    // received clipboard data from agent, copy it to browser clipboard
+    const received_clipboard = new Messages.SpiceMsgClipboardReceive(agent_data, this.agent_caps);
+    if (received_clipboard.type === Constants.VD_AGENT_CLIPBOARD_UTF8_TEXT)
+    {
+        // write it to the browser clipboard
+        if (navigator.clipboard && navigator.clipboard.writeText)
+        {
+            const text = received_clipboard.get_text();
+            navigator.clipboard.writeText(text).catch(err => {
+                console.warn("Failed to write to navigator clipboard:", err);
+            });
+        }
+    }
+    else
+    {
+        console.log("Unsupported clipboard type:", received_clipboard.type);
+    }
+}
+
+SpiceMainConn.prototype.handle_clipboard_send = function()
+{
+    DEBUG > 1 && console.log("sending clipboard data to agent");
+
+    // agent is requesting clipboard data, read it from browser clipboard and send it.
+    if (navigator.clipboard && navigator.clipboard.readText)
+    {
+        navigator.clipboard.readText().then(text => {
+            const type = Constants.VD_AGENT_CLIPBOARD_UTF8_TEXT;
+            const clipboard_msg = new Messages.SpiceMsgClipboardSend(type, text, this.agent_caps);
+            this.send_agent_message(Constants.VD_AGENT_CLIPBOARD, clipboard_msg);
+        }).catch(err => {
+            console.log("Failed to read clipboard:", err);
+        });
+    }
+}
+
+SpiceMainConn.prototype.send_clipboard_grab = function()
+{
+    DEBUG > 1 && console.log("browser is asking agent to grab clipboard");
+
+    // Send clipboard grab to agent. Agent will then ask for the host os clipboard contents in a dedicated message.
+    const type = Constants.VD_AGENT_CLIPBOARD_UTF8_TEXT;
+    const grab_message = new Messages.SpiceMsgClipboardGrab(type, this.agent_caps);
+    this.send_agent_message(Constants.VD_AGENT_CLIPBOARD_GRAB, grab_message)
 }
 
 SpiceMainConn.prototype.connect_agent = function()

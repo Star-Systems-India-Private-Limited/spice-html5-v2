@@ -330,6 +330,107 @@ SpiceMsgChannels.prototype =
     },
 }
 
+function hasClipboardSelection(caps)
+{
+    return ((caps[0] >> Constants.VD_AGENT_CAP_CLIPBOARD_SELECTION) & 1) != 0;
+}
+
+function SpiceMsgClipboardGrab(type, caps)
+{
+    this.has_clipboard_selection = hasClipboardSelection(caps)
+    this.type = type;
+}
+
+SpiceMsgClipboardGrab.prototype =
+{
+    to_buffer: function(a, at)
+    {
+        at = at || 0;
+        var dv = new SpiceDataView(a);
+        if (this.has_clipboard_selection)
+        {
+            dv.setUint32(at, 0, true); at += 4;
+        }
+        dv.setUint32(at, this.type, true); at += 4;
+    },
+
+    buffer_size: function()
+    {
+        return (this.has_clipboard_selection ? 8 : 4);
+    }
+};
+
+function SpiceMsgClipboardReceive(agent_data, caps)
+{
+    this.has_clipboard_selection = hasClipboardSelection(caps)
+    const dv = new DataView(agent_data.data);
+    var at = (this.has_clipboard_selection ? 4 : 0);
+    this.type = dv.getUint32(at, true); at += 4;
+    this.payload = agent_data.data.slice(at);
+}
+
+SpiceMsgClipboardReceive.prototype =
+{
+    get_text: function()
+    {
+        return new TextDecoder("utf-8").decode(this.payload);
+    }
+}
+
+function SpiceMsgClipboardRequest(type, caps)
+{
+    this.has_clipboard_selection = hasClipboardSelection(caps)
+    this.type = type;
+}
+
+SpiceMsgClipboardRequest.prototype =
+{
+    to_buffer: function(a, at)
+    {
+        at = at || 0;
+        var dv = new SpiceDataView(a);
+        if (this.has_clipboard_selection)
+        {
+            dv.setUint32(at, 0, true); at += 4;
+        }
+        dv.setUint32(at, this.type, true); at += 4;
+    },
+
+    buffer_size: function()
+    {
+        return (this.has_clipboard_selection ? 8 : 4);
+    }
+};
+
+function SpiceMsgClipboardSend(type, text, caps)
+{
+    this.has_clipboard_selection = hasClipboardSelection(caps)
+    this.type = type;
+    this.text = text;
+}
+
+SpiceMsgClipboardSend.prototype =
+{
+    to_buffer: function(a, at)
+    {
+        at = at || 0;
+        const dv = new SpiceDataView(a);
+        if (this.has_clipboard_selection)
+        {
+            dv.setUint32(at, 0, true); at += 4;
+        }
+        dv.setUint32(at, this.type, true); at += 4;
+        const payload = new TextEncoder().encode(this.text);
+        new Uint8Array(a, at, payload.byteLength).set(payload); at += payload.byteLength;
+    },
+
+    buffer_size: function()
+    {
+        const payloadLength = new TextEncoder().encode(this.text).byteLength;
+        return (this.has_clipboard_selection ? 8 : 4) + payloadLength;
+    }
+};
+
 function SpiceMsgMainInit(a, at)
 {
     this.from_buffer(a, at);
@@ -1323,6 +1424,10 @@ export {
   SpiceLinkAuthReply,
   SpiceMiniData,
   SpiceMsgChannels,
+  SpiceMsgClipboardGrab,
+  SpiceMsgClipboardReceive,
+  SpiceMsgClipboardRequest,
+  SpiceMsgClipboardSend,
   SpiceMsgMainInit,
   SpiceMsgMainMouseMode,
   SpiceMsgMainAgentData,
